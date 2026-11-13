@@ -4,7 +4,7 @@ The kOps project is released on an as-needed basis. The process is as follows:
 
 ## Release branches
 
-We maintain a `release-1.17` branch for kOps 1.17.X, `release-1.18` for kOps 1.18.X,
+We maintain a `release-1.21` branch for kOps 1.21.X, `release-1.22` for kOps 1.22.X,
 etc.
 
 `master` is where development happens.  We create new branches from master as we
@@ -17,14 +17,14 @@ Generally we don't encourage users to run older kOps versions, or older
 branches, because newer versions of kOps should remain compatible with older
 versions of Kubernetes.
 
-Beta and stable releases should be made from the `release-1.X` branch.
-The tags should be made on the release branches. Alpha releases may be made on
-either `master` or a release branch.
+Beta and stable releases (excepting the first beta of a new minor version) should be made from the `release-1.X` branch.
+Alpha releases may be made on either `master` or a release branch.
 
 ## Creating new release branches
 
 Typically, kOps alpha releases are created off the master branch and beta and stable releases are created off of release branches.
-In order to create a new release branch off of master prior to a beta release, perform the following steps:
+The exception is the first beta release for a new minor version: it is where the release branch for the minor version branches off of master.
+In order to create the first beta release for a new minor version and a new release branch off of master, perform the following steps:
 
 1. Update the periodic E2E Prow jobs for the "next" kOps/Kubernetes minor version.
    * Edit [build_jobs.py](https://github.com/kubernetes/test-infra/tree/master/config/jobs/kubernetes/kops/build_jobs.py)
@@ -38,7 +38,7 @@ In order to create a new release branch off of master prior to a beta release, p
 3. Update [prow's milestone_applier config](https://github.com/kubernetes/test-infra/blob/dc99617c881805981b85189da232d29747f87004/config/prow/plugins.yaml#L309-L313)
    to update master to use the new milestone and add an entry for the new feature branch. 
    Create this as a separate PR as it will require separate review.
-4. Create the new release branch in git and push it to the GitHub repo.
+4. Create the .0-beta.1 release per the instructions in the following section. GitHub Actions will create the release branch when it tags the release.
 5. On the master branch, create a PR to update to the next minor version:
    * Update `OldestSupportedKubernetesVersion` and `OldestRecommendedKubernetesVersion` in
    [apply_cluster.go](https://github.com/kubernetes/kops/tree/master/upup/pkg/fi/cloudup/apply_cluster.go)
@@ -50,27 +50,37 @@ In order to create a new release branch off of master prior to a beta release, p
 
 ## Creating releases
 
-### Update versions
-
-See [1.19.0-alpha.1 PR](https://github.com/kubernetes/kops/pull/9494) for an example.
-
-* Use the hack/set-version script to update versions:  `hack/set-version 1.20.0`
-
-The syntax is `hack/set-version <new-release-version>`
-
-`new-release-version` is the version you are releasing.
-
-* Update the golden tests: `hack/update-expected.sh`
-
-* Commit the changes (without pushing yet): `git add . && git commit -m "Release 1.X.Y"`
-
-* This is the "release commit".
-
 ### Send Pull Request to propose a release
 
+See [1.22.0-beta.2 PR](https://github.com/kubernetes/kops/pull/12467) for an example.
+
+Use the hack/set-version script to update versions, using the new version as the argument.
+Then update the golden tests.
+
 ```
-git push $USER
-hub pull-request
+hack/set-version 1.22.0
+hack/update-expected.sh
+```
+
+On macOS, some cleanup might be needed:
+
+```
+find . -name "*.bak" -delete
+```
+
+Commit the changes (without pushing yet):
+
+```
+VERSION=$(tools/get_version.sh | grep VERSION | awk '{print $2}')
+git checkout -b release_${VERSION}
+git add . && git commit -m "Release ${VERSION}"
+```
+
+This is the "release commit". Push and create a PR.
+For alpha and ".0-beta.1" releases, the base branch flag (`-B`) should be omitted.
+
+```
+gh pr create -f -l tide/merge-method-squash -B release-1.22
 ```
 
 Wait for the PR to merge.
@@ -85,78 +95,21 @@ To review someone else's release commit, verify that:
 The "verify-versions" CI task will ensure that the versions have been updated in all the
 expected places.
 
-### Tag the release commit
-
-(TODO: Can we automate this?  Maybe we should have a tags.yaml file)
-
-Check out the release commit.
-Make sure you are not on a newer one! Do not tag the merge commit!
-
-```
-VERSION=$(tools/get_version.sh | grep VERSION | awk '{print $2}')
-echo ${VERSION}
-```
-
-```
-git tag -a -m "Release ${VERSION}" v${VERSION}
-git show v${VERSION}
-```
-
-Double check it is the release commit!
-
-```
-git push git@github.com:kubernetes/kops v${VERSION}
-git fetch origin
-```
-
-
 ### Wait for CI job to complete
 
-The staging CI job should now see the tag, and build it (from the trusted prow cluster, using Google Cloud Build).
+After the PR merges, GitHub Actions will tag the release.
+The [staging CI job](https://testgrid.k8s.io/sig-cluster-lifecycle-kops#kops-postsubmit-push-to-staging) should build from the tag (from the trusted prow cluster, using Google Cloud Build).
 
-The job is here: https://testgrid.k8s.io/sig-cluster-lifecycle-kops#kops-postsubmit-push-to-staging
-
-It (currently) takes about 10 minutes to run.
-
-In the meantime, you can compile the release notes...
-
-### Compile release notes
-
-This step is not necessary for an ".0-alpha.1" release as these are made off
-of the branch point for the previous minor release.
-
-The `relnotes` tool is from [kopeio/shipbot](https://github.com/kopeio/shipbot).
-
-For example:
-
-```
-git checkout master
-git pull
-git checkout -b relnotes_${VERSION}
-
-FROM=1.21.0-alpha.2 # Replace "1.21.0-alpha.2" with the previous version
-DOC=$(expr ${VERSION} : '\([^.]*.[^.]*\)')
-git log v${FROM}..v${VERSION} --oneline | grep Merge.pull | grep -v Revert..Merge.pull | cut -f 5 -d ' ' | tac  > /tmp/prs
-echo -e "\n## ${FROM} to ${VERSION}\n"  >> docs/releases/${DOC}-NOTES.md
-relnotes  -config .shipbot.yaml  < /tmp/prs  >> docs/releases/${DOC}-NOTES.md
-```
-
-Review then send a PR with the release notes:
-
-```
-git add -p docs/releases/${DOC}-NOTES.md
-git commit -m "Release notes for ${VERSION}"
-git push ${USER}
-hub pull-request
-```
+It (currently) takes about 30 minutes to run.
 
 ### Propose promotion of artifacts
 
 The following tools are prerequisites:
 
-* [`gsutil`](https://cloud.google.com/storage/docs/gsutil_install)
-* [`cip`][promo-tools]
-* [`kpromo`][promo-tools]
+* [`gcloud`](https://cloud.google.com/sdk/docs/install)
+* [`kpromo`](https://github.com/kubernetes-sigs/promo-tools)
+
+Currently, we send the image and non-image artifact promotion PRs separately.
 
 Create container promotion PR:
 
@@ -164,23 +117,21 @@ Create container promotion PR:
 cd ${GOPATH}/src/k8s.io/k8s.io
 
 git checkout main
-git pull
+git pull upstream main
 git checkout -b kops_images_${VERSION}
 
-cd k8s.gcr.io/images/k8s-staging-kops
-echo "" >> images.yaml
-echo "# ${VERSION}" >> images.yaml
-cip run --snapshot gcr.io/k8s-staging-kops --snapshot-tag ${VERSION} >> images.yaml
-```
+echo "" >> registry.k8s.io/images/k8s-staging-kops/images.yaml
+echo "# ${VERSION}" >> registry.k8s.io/images/k8s-staging-kops/images.yaml
+kpromo cip run --snapshot gcr.io/k8s-staging-kops --snapshot-tag ${VERSION} >> registry.k8s.io/images/k8s-staging-kops/images.yaml
 
-Currently we send the image and non-image artifact promotion PRs separately.
-
-```
-cd ${GOPATH}/src/k8s.io/k8s.io
-git add -p k8s.gcr.io/images/k8s-staging-kops/images.yaml
+git add -p registry.k8s.io/images/k8s-staging-kops/images.yaml
 git commit -m "Promote kOps $VERSION images"
-git push ${USER}
-hub pull-request -b main
+```
+
+Verify, then send a PR:
+
+```
+gh pr create -f
 ```
 
 Create binary promotion PR:
@@ -189,45 +140,35 @@ Create binary promotion PR:
 cd ${GOPATH}/src/k8s.io/k8s.io
 
 git checkout main
-git pull
+git pull upstream main
 git checkout -b kops_artifacts_${VERSION}
 
 rm -rf ./k8s-staging-kops/kops/releases
 mkdir -p ./k8s-staging-kops/kops/releases/${VERSION}/
-gsutil rsync -r  gs://k8s-staging-kops/kops/releases/${VERSION}/ ./k8s-staging-kops/kops/releases/${VERSION}/
+gcloud storage rsync -r gs://k8s-staging-kops/kops/releases/${VERSION}/ ./k8s-staging-kops/kops/releases/${VERSION}/
 
 kpromo manifest files --src k8s-staging-kops/kops/releases/ >> artifacts/manifests/k8s-staging-kops/${VERSION}.yaml
+
+git add artifacts/manifests/k8s-staging-kops/${VERSION}.yaml
+git commit -m "Promote kOps $VERSION binary artifacts"
 ```
 
 Verify, then send a PR:
 
 ```
-git add artifacts/manifests/k8s-staging-kops/${VERSION}.yaml
-git commit -m "Promote kOps $VERSION binary artifacts"
-git push ${USER}
-hub pull-request -b main
+gh pr create -f
 ```
 
 Upon approval and merge of the binary promotion PR, artifacts will be promoted
 to artifacts.k8s.io via postsubmit. The process is described in detail
 [here](https://git.k8s.io/k8s.io/artifacts/README.md).
 
-### Promote to GitHub / S3 (legacy)
+### Promote to GitHub (all releases)
 
-The `shipbot` tool is from [kopeio/shipbot](https://github.com/kopeio/shipbot).
-
-Binaries to github (all releases):
+This downloads the promoted binaries from artifacts.k8s.io and uploads them to the GitHub release:
 
 ```
-cd ${GOPATH}/src/k8s.io/kops/
-git checkout v$VERSION
-shipbot -tag v${VERSION} -config .shipbot.yaml -src ${GOPATH}/src/k8s.io/k8s.io/k8s-staging-kops/kops/releases/${VERSION}/
-```
-
-Binaries to S3 bucket (only for stable releases < 1.22):
-
-```
-aws s3 sync --acl public-read k8s-staging-kops/kops/releases/${VERSION}/ s3://kubeupv2/kops/${VERSION}/
+hack/promote-to-github.sh ${VERSION}
 ```
 
 ### Smoke test the release
@@ -250,7 +191,7 @@ everything is pulling from the new locations.
 
 * Download release
 * Validate it
-* Add notes
+* Add notes by pressing the "Generate release notes" button
 * Publish it
 
 ### Release to Homebrew
@@ -270,12 +211,7 @@ Use the following instructions: https://github.com/cncf/k8s-conformance/blob/mas
 
 This step is only necessary for a first stable minor release (a ".0").
 
-Create a PR that updates the following documents:
-
-* Rotate the new version into the version matrix in both
-[releases.md](https://github.com/kubernetes/kops/tree/master/docs/welcome/releases.md)
-and [README-ES.md](https://github.com/kubernetes/kops/tree/master/README-ES.md).
-* Remove the "has not been released yet" header in the version's release notes.
+Create a PR that removes the "has not been released yet" header in the version's release notes.
 
 ### Add link to release notes
 
@@ -294,5 +230,3 @@ Once we are satisfied the release is sound:
 Once we are satisfied the release is stable:
 
 * Bump the kOps recommended version in the stable channel
-
-[promo-tools]: https://sigs.k8s.io/promo-tools

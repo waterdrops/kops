@@ -18,69 +18,121 @@ package cmd
 
 import (
 	"fmt"
+	"net/http"
 
+	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/restmapper"
+	"k8s.io/kops/util/pkg/vfs"
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
-
-	certmanager "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
 )
 
-type Factory interface {
-	KubernetesClient() (kubernetes.Interface, error)
-	CertManagerClient() (certmanager.Interface, error)
+type ChannelsFactory struct {
+	configFlags      genericclioptions.ConfigFlags
+	cachedRESTConfig *rest.Config
+	cachedHTTPClient *http.Client
+	vfsContext       *vfs.VFSContext
+	restMapper       *restmapper.DeferredDiscoveryRESTMapper
+	dynamicClient    dynamic.Interface
+	kubernetesClient kubernetes.Interface
 }
 
-type DefaultFactory struct {
-	kubernetesClient  kubernetes.Interface
-	certManagerClient certmanager.Interface
+func NewChannelsFactory() *ChannelsFactory {
+	return &ChannelsFactory{}
 }
 
-var _ Factory = &DefaultFactory{}
+func (f *ChannelsFactory) RESTConfig() (*rest.Config, error) {
+	if f.cachedRESTConfig == nil {
+		clientGetter := genericclioptions.NewConfigFlags(true)
 
-func loadConfig() (*rest.Config, error) {
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	loadingRules.DefaultClientConfig = &clientcmd.DefaultClientConfig
+		restConfig, err := clientGetter.ToRESTConfig()
+		if err != nil {
+			return nil, fmt.Errorf("cannot load kubecfg settings: %w", err)
+		}
 
-	configOverrides := &clientcmd.ConfigOverrides{
-		ClusterDefaults: clientcmd.ClusterDefaults,
+		restConfig.UserAgent = "kops"
+		restConfig.Burst = 50
+		restConfig.QPS = 20
+		f.cachedRESTConfig = restConfig
+	}
+	return f.cachedRESTConfig, nil
+}
+
+func (f *ChannelsFactory) HTTPClient() (*http.Client, error) {
+	if f.cachedHTTPClient == nil {
+		restConfig, err := f.RESTConfig()
+		if err != nil {
+			return nil, err
+		}
+		httpClient, err := rest.HTTPClientFor(restConfig)
+		if err != nil {
+			return nil, fmt.Errorf("getting http client: %w", err)
+		}
+		f.cachedHTTPClient = httpClient
+	}
+	return f.cachedHTTPClient, nil
+}
+
+func (f *ChannelsFactory) RESTMapper() (*restmapper.DeferredDiscoveryRESTMapper, error) {
+	if f.restMapper == nil {
+		discoveryClient, err := f.configFlags.ToDiscoveryClient()
+		if err != nil {
+			return nil, err
+		}
+
+		restMapper := restmapper.NewDeferredDiscoveryRESTMapper(discoveryClient)
+
+		f.restMapper = restMapper
 	}
 
-	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
-	return kubeConfig.ClientConfig()
-
+	return f.restMapper, nil
 }
 
-func (f *DefaultFactory) KubernetesClient() (kubernetes.Interface, error) {
+func (f *ChannelsFactory) DynamicClient() (dynamic.Interface, error) {
+	if f.dynamicClient == nil {
+		restConfig, err := f.RESTConfig()
+		if err != nil {
+			return nil, err
+		}
+		httpClient, err := f.HTTPClient()
+		if err != nil {
+			return nil, err
+		}
+		dynamicClient, err := dynamic.NewForConfigAndClient(restConfig, httpClient)
+		if err != nil {
+			return nil, err
+		}
+		f.dynamicClient = dynamicClient
+	}
+	return f.dynamicClient, nil
+}
+
+func (f *ChannelsFactory) KubernetesClient() (kubernetes.Interface, error) {
 	if f.kubernetesClient == nil {
-		config, err := loadConfig()
+		restConfig, err := f.RESTConfig()
 		if err != nil {
-			return nil, fmt.Errorf("cannot load kubecfg settings: %v", err)
+			return nil, err
 		}
-		k8sClient, err := kubernetes.NewForConfig(config)
+		httpClient, err := f.HTTPClient()
 		if err != nil {
-			return nil, fmt.Errorf("cannot build kube client: %v", err)
+			return nil, err
 		}
-		f.kubernetesClient = k8sClient
+		kubernetesClient, err := kubernetes.NewForConfigAndClient(restConfig, httpClient)
+		if err != nil {
+			return nil, err
+		}
+		f.kubernetesClient = kubernetesClient
 	}
-
 	return f.kubernetesClient, nil
 }
 
-func (f *DefaultFactory) CertManagerClient() (certmanager.Interface, error) {
-	if f.certManagerClient == nil {
-		config, err := loadConfig()
-		if err != nil {
-			return nil, fmt.Errorf("cannot load kubecfg settings: %v", err)
-		}
-		certManagerClient, err := certmanager.NewForConfig(config)
-		if err != nil {
-			return nil, fmt.Errorf("cannot build kube client: %v", err)
-		}
-		f.certManagerClient = certManagerClient
+func (f *ChannelsFactory) VFSContext() *vfs.VFSContext {
+	if f.vfsContext == nil {
+		// TODO vfs.NewVFSContext()
+		f.vfsContext = vfs.Context
 	}
-
-	return f.certManagerClient, nil
+	return f.vfsContext
 }

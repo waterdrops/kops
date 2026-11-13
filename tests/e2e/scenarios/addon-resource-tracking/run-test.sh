@@ -15,49 +15,29 @@
 # limitations under the License.
 
 REPO_ROOT=$(git rev-parse --show-toplevel);
-source "${REPO_ROOT}"/tests/e2e/scenarios/lib/common.sh
+TEST_ROOT="${REPO_ROOT}/tests/e2e/scenarios/addon-resource-tracking"
 
-function haveds() {
-	local ds=0
-	kubectl get ds -n kube-system aws-node-termination-handler || ds=$?
-	return $ds
-}
+make test-e2e-install
 
-# Start a cluster with an old version of channel
+KUBETEST2_ARGS=()
+KUBETEST2_ARGS+=("-v=2")
 
-export KOPS_BASE_URL
-KOPS_BASE_URL="$(curl -s https://storage.googleapis.com/k8s-staging-kops/kops/releases/markers/release-1.21/latest-ci.txt)"
-KOPS=$(kops-download-from-base)
+if [[ "${JOB_TYPE}" == "presubmit" && "${REPO_OWNER}/${REPO_NAME}" == "kubernetes/kops" ]]; then
+  KUBETEST2_ARGS+=("--build")
+  KUBETEST2_ARGS+=("--kops-binary-path=${GOPATH}/src/k8s.io/kops/.build/dist/linux/$(go env GOARCH)/kops")
+else
+  KUBETEST2_ARGS+=("--kops-version-marker=${KOPS_VERSION_MARKER:-https://storage.googleapis.com/k8s-staging-kops/kops/releases/markers/master/latest-ci.txt}")
+fi
 
-# Start with a cluster running nodeTerminationHandler
-ARGS="--override=cluster.spec.nodeTerminationHandler.enabled=true"
+# Create cluster with nodeTerminationHandler enabled (DaemonSet mode)
+CREATE_ARGS="--networking calico"
+CREATE_ARGS="${CREATE_ARGS} --set=cluster.spec.cloudProvider.aws.nodeTerminationHandler.enabled=true"
+CREATE_ARGS="${CREATE_ARGS} --set=cluster.spec.cloudProvider.aws.nodeTerminationHandler.enableSQSTerminationDraining=false"
 
-${KUBETEST2} \
-    --up \
-    --kubernetes-version="1.21.0" \
-    --kops-binary-path="${KOPS}" \
-    --create-args="$ARGS"
-
-
-haveds
-
-# Upgrade to a version that should adopt existing resources and apply the change below
-KOPS=$(kops-acquire-latest)
-
-cp "${KOPS}" "${WORKSPACE}/kops"
-
-# Switch to queue mode. This should remove the DS and install a Deployment instead
-kops edit cluster "${CLUSTER_NAME}" "--set=cluster.spec.nodeTerminationHandler.enableSQSTerminationDraining=true"
-
-# allow downgrade is a bug where the version written to VFS is not the same as the running version.
-kops update cluster --allow-kops-downgrade
-kops update cluster --yes --allow-kops-downgrade
-
-# wait for channels to deploy
-sleep 90s
-
-# just make sure pods are ready
-kops validate cluster --wait=5m
-
-# We should no longer have a daemonset called aws-node-termination-handler
-haveds && exit 1
+kubetest2 kops \
+    --up --down \
+    "${KUBETEST2_ARGS[@]}" \
+    --cloud-provider=aws \
+    --create-args="${CREATE_ARGS}" \
+    --kubernetes-version="https://dl.k8s.io/release/stable.txt" \
+    --test=exec -- "${TEST_ROOT}/test.sh"

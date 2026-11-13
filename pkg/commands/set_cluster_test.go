@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"k8s.io/kops/pkg/apis/kops"
-	"k8s.io/kops/upup/pkg/fi"
 )
 
 func TestSetClusterBadInput(t *testing.T) {
@@ -57,7 +56,22 @@ func TestSetClusterFields(t *testing.T) {
 					KubernetesVersion: "1.8.2",
 					Kubelet: &kops.KubeletConfigSpec{
 						AuthorizationMode:          "Webhook",
-						AuthenticationTokenWebhook: fi.Bool(true),
+						AuthenticationTokenWebhook: new(true),
+					},
+				},
+			},
+		},
+		{
+			Fields: []string{
+				"spec.api.dns=",
+			},
+			Input: kops.Cluster{
+				Spec: kops.ClusterSpec{},
+			},
+			Output: kops.Cluster{
+				Spec: kops.ClusterSpec{
+					API: kops.APISpec{
+						DNS: &kops.DNSAccessSpec{},
 					},
 				},
 			},
@@ -77,17 +91,7 @@ func TestSetClusterFields(t *testing.T) {
 			Output: kops.Cluster{
 				Spec: kops.ClusterSpec{
 					Kubelet: &kops.KubeletConfigSpec{
-						AuthenticationTokenWebhook: fi.Bool(false),
-					},
-				},
-			},
-		},
-		{
-			Fields: []string{"spec.docker.selinuxEnabled=true"},
-			Output: kops.Cluster{
-				Spec: kops.ClusterSpec{
-					Docker: &kops.DockerConfig{
-						SelinuxEnabled: fi.Bool(true),
+						AuthenticationTokenWebhook: new(false),
 					},
 				},
 			},
@@ -101,10 +105,12 @@ func TestSetClusterFields(t *testing.T) {
 			},
 		},
 		{
-			Fields: []string{"spec.masterPublicName=api.example.com"},
+			Fields: []string{"spec.api.publicName=api.example.com"},
 			Output: kops.Cluster{
 				Spec: kops.ClusterSpec{
-					MasterPublicName: "api.example.com",
+					API: kops.APISpec{
+						PublicName: "api.example.com",
+					},
 				},
 			},
 		},
@@ -126,48 +132,6 @@ func TestSetClusterFields(t *testing.T) {
 			Output: kops.Cluster{
 				Spec: kops.ClusterSpec{
 					NodePortAccess: []string{"10.0.0.0/8", "192.168.0.0/16"},
-				},
-			},
-		},
-		{
-			Fields: []string{
-				"cluster.spec.etcdClusters[*].enableEtcdTLS=true",
-			},
-			Input: kops.Cluster{
-				Spec: kops.ClusterSpec{
-					EtcdClusters: []kops.EtcdClusterSpec{
-						{Name: "one", EnableEtcdTLS: true},
-						{Name: "two", EnableEtcdTLS: false},
-					},
-				},
-			},
-			Output: kops.Cluster{
-				Spec: kops.ClusterSpec{
-					EtcdClusters: []kops.EtcdClusterSpec{
-						{Name: "one", EnableEtcdTLS: true},
-						{Name: "two", EnableEtcdTLS: true},
-					},
-				},
-			},
-		},
-		{
-			Fields: []string{
-				"cluster.spec.etcdClusters[*].enableTLSAuth=true",
-			},
-			Input: kops.Cluster{
-				Spec: kops.ClusterSpec{
-					EtcdClusters: []kops.EtcdClusterSpec{
-						{Name: "one", EnableTLSAuth: true},
-						{Name: "two", EnableTLSAuth: false},
-					},
-				},
-			},
-			Output: kops.Cluster{
-				Spec: kops.ClusterSpec{
-					EtcdClusters: []kops.EtcdClusterSpec{
-						{Name: "one", EnableTLSAuth: true},
-						{Name: "two", EnableTLSAuth: true},
-					},
 				},
 			},
 		},
@@ -220,9 +184,9 @@ func TestSetClusterFields(t *testing.T) {
 			Input: kops.Cluster{},
 			Output: kops.Cluster{
 				Spec: kops.ClusterSpec{
-					Networking: &kops.NetworkingSpec{
+					Networking: kops.NetworkingSpec{
 						Cilium: &kops.CiliumNetworkingSpec{
-							Ipam: "on",
+							IPAM: "on",
 						},
 					},
 				},
@@ -235,7 +199,7 @@ func TestSetClusterFields(t *testing.T) {
 			Input: kops.Cluster{},
 			Output: kops.Cluster{
 				Spec: kops.ClusterSpec{
-					Networking: &kops.NetworkingSpec{
+					Networking: kops.NetworkingSpec{
 						Cilium: &kops.CiliumNetworkingSpec{
 							EnableHostReachableServices: true,
 						},
@@ -250,7 +214,7 @@ func TestSetClusterFields(t *testing.T) {
 			Input: kops.Cluster{},
 			Output: kops.Cluster{
 				Spec: kops.ClusterSpec{
-					Networking: &kops.NetworkingSpec{
+					Networking: kops.NetworkingSpec{
 						Cilium: &kops.CiliumNetworkingSpec{
 							EnableNodePort: true,
 						},
@@ -260,14 +224,14 @@ func TestSetClusterFields(t *testing.T) {
 		},
 		{
 			Fields: []string{
-				"cluster.spec.networking.cilium.disableMasquerade=true",
+				"cluster.spec.networking.cilium.masquerade=false",
 			},
 			Input: kops.Cluster{},
 			Output: kops.Cluster{
 				Spec: kops.ClusterSpec{
-					Networking: &kops.NetworkingSpec{
+					Networking: kops.NetworkingSpec{
 						Cilium: &kops.CiliumNetworkingSpec{
-							DisableMasquerade: fi.Bool(true),
+							Masquerade: new(false),
 						},
 					},
 				},
@@ -281,7 +245,7 @@ func TestSetClusterFields(t *testing.T) {
 			Output: kops.Cluster{
 				Spec: kops.ClusterSpec{
 					KubeProxy: &kops.KubeProxyConfig{
-						Enabled: fi.Bool(true),
+						Enabled: new(true),
 					},
 				},
 			},
@@ -293,7 +257,7 @@ func TestSetClusterFields(t *testing.T) {
 			Input: kops.Cluster{},
 			Output: kops.Cluster{
 				Spec: kops.ClusterSpec{
-					Networking: &kops.NetworkingSpec{
+					Networking: kops.NetworkingSpec{
 						Cilium: &kops.CiliumNetworkingSpec{
 							AgentPrometheusPort: 1234,
 						},
@@ -321,7 +285,6 @@ func TestSetClusterFields(t *testing.T) {
 }
 
 func TestSetCiliumFields(t *testing.T) {
-
 	grid := []struct {
 		Fields []string
 		Input  kops.Cluster
@@ -331,7 +294,7 @@ func TestSetCiliumFields(t *testing.T) {
 			Fields: []string{
 				"cluster.spec.networking.cilium.ipam=eni",
 				"cluster.spec.networking.cilium.enableNodePort=true",
-				"cluster.spec.networking.cilium.disableMasquerade=true",
+				"cluster.spec.networking.cilium.masquerade=false",
 				"cluster.spec.kubeProxy.enabled=false",
 			},
 			Input: kops.Cluster{
@@ -340,13 +303,13 @@ func TestSetCiliumFields(t *testing.T) {
 			Output: kops.Cluster{
 				Spec: kops.ClusterSpec{
 					KubeProxy: &kops.KubeProxyConfig{
-						Enabled: fi.Bool(false),
+						Enabled: new(false),
 					},
-					Networking: &kops.NetworkingSpec{
+					Networking: kops.NetworkingSpec{
 						Cilium: &kops.CiliumNetworkingSpec{
-							Ipam:              "eni",
-							EnableNodePort:    true,
-							DisableMasquerade: fi.Bool(true),
+							IPAM:           "eni",
+							EnableNodePort: true,
+							Masquerade:     new(false),
 						},
 					},
 				},
